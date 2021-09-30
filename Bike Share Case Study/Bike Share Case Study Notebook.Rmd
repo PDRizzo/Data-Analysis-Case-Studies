@@ -1,0 +1,172 @@
+---
+title: "Bike Share Case Study"
+output: html_notebook
+---
+
+
+```{r}
+## Check to see if required packages are installed.  If so, it will be loaded.
+## Otherwise, download missing package(s) with dependencies from CRAN, install
+## default Library, and then load.
+
+## Required Packages
+packages <- c("tidyverse", "lubridate", "dplyr", "readr", "fs", "purrr")
+
+## Perform check / load / install
+
+package.check <- lapply(
+	packages,
+	FUN=function (x) {
+		if	(!require(x, character.only = TRUE)) {
+			install.packages(x, dependencies = TRUE)
+			library(x, character.only = TRUE)
+		}
+	}
+)
+```
+
+
+
+```{r}
+## Download raw data to analyze
+## Set Variables for downloading raw data
+
+data_url <- "https://divvy-tripdata.s3.amazonaws.com/"
+
+## Set this location to wherever you want the files saved.  
+## The location must be both readable and writeable by the user
+
+download_location <- "data/download/"
+
+## Set the files to be downloaded.  This list represents the past
+## 12 months of data as of 9/29/2021
+
+download_files <- c(
+"202009-divvy-tripdata.zip",
+"202010-divvy-tripdata.zip",
+"202011-divvy-tripdata.zip",
+"202012-divvy-tripdata.zip",
+"202101-divvy-tripdata.zip",
+"202102-divvy-tripdata.zip",
+"202103-divvy-tripdata.zip",
+"202104-divvy-tripdata.zip",
+"202105-divvy-tripdata.zip",
+"202106-divvy-tripdata.zip",
+"202107-divvy-tripdata.zip",
+"202108-divvy-tripdata.zip")
+
+
+## Perform actual download of files
+
+for (i in download_files) {
+	download.file(
+		paste0(data_url,i),
+	paste0(download_location,i)
+	)
+
+}
+```
+
+
+
+```{r}
+## Import zip files
+
+## Set some variables, using relative pathing for portability
+
+import_path <- "data/download"
+
+
+## Create dataframe trip_data and populate with data from all CSV files found in import_path
+## During import, explicitly set start_station_id and end_station_id columns to type character.
+
+trip_data <- dir_ls(import_path, regexp = "\\.zip$") %>%
+	map_dfr(read_csv, col_types = cols(start_station_id = "c", end_station_id = "c"), .id = "source_file")
+
+spec (trip_data)
+
+```
+
+```{r}
+## Add some columns to make aggregation of ride data for each date, month, day, year, day of week easier
+
+trip_data$date <- as.Date(trip_data$started_at)
+trip_data$month <- format(as.Date(trip_data$date), "%m")
+trip_data$day <- format(as.Date(trip_data$date), "%d")
+trip_data$year <- format(as.Date(trip_data$date), "%Y")
+trip_data$day_of_week <- format(as.Date(trip_data$date), "%A")
+```
+
+```{r}
+## Calculate and add column for trip duration 
+
+trip_data <- within (trip_data, trip_duration <- time_length (as.duration (interval (trip_data$started_at, trip_data$ended_at))))
+summary (trip_data$trip_duration)
+
+```
+
+```{r}
+## Remove some anomalous data from trip_duration due to bikes being removed from service
+## Creating new version of data frame due to removal of data, omitting rows that result in NA
+
+trip_data_cleaned <- na.omit(trip_data[!(trip_data$start_station_name == "HQ QR" | trip_data$trip_duration<0),])
+summary (trip_data_cleaned$trip_duration)
+```
+
+```{r}
+## Perform descriptive analysis on trip_duration (all figures are in seconds)
+mean(trip_data_cleaned$trip_duration)
+median(trip_data_cleaned$trip_duration)
+max(trip_data_cleaned$trip_duration)
+min(trip_data_cleaned$trip_duration)
+
+```
+
+```{r}
+## Compare trip_duration between members and casual users
+aggregate(trip_data_cleaned$trip_duration ~ trip_data_cleaned$member_casual, FUN = mean)
+aggregate(trip_data_cleaned$trip_duration ~ trip_data_cleaned$member_casual, FUN = median)
+aggregate(trip_data_cleaned$trip_duration ~ trip_data_cleaned$member_casual, FUN = max)
+aggregate(trip_data_cleaned$trip_duration ~ trip_data_cleaned$member_casual, FUN = min)
+
+
+```
+
+```{r}
+## Ensure that the days of the week are in order.
+trip_data_cleaned$day_of_week <- ordered(trip_data_cleaned$day_of_week,levels=c("Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"))
+
+## Produce average ride time, segmented per day of week, for members and casual users
+aggregate(trip_data_cleaned$trip_duration ~ trip_data_cleaned$member_casual + trip_data_cleaned$day_of_week, FUN=mean)
+
+```
+
+
+
+```{r}
+## Analyze the ridership data by user type and weekday
+
+## Create column to track if a ride occurred on a weekday
+trip_data_cleaned %>%
+  mutate(weekday = wday(started_at, label=TRUE)) %>%
+  group_by(member_casual,weekday) %>%
+  summarise(number_of_trips = n(), average_duration = mean(trip_duration)) %>%
+  arrange(member_casual, weekday)
+  
+
+
+```
+
+```{r}
+## Create visualization of number of trips by user type
+trip_data_cleaned %>%
+  mutate(weekday = wday(started_at, label=TRUE)) %>%
+  group_by(member_casual, weekday) %>%
+  summarise(number_of_trips=n(), average_duration=mean(trip_duration)) %>%
+  arrange(member_casual,weekday) %>%
+  ggplot(aes(x=weekday,y=average_duration,fill=member_casual)) +
+  geom_col(position="dodge")
+ 
+
+```
+
